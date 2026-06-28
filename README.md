@@ -15,7 +15,7 @@ Private and free Discord music bot with text-channel-first UX.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 22 LTS (recommended)
 - Discord bot token and app client ID
 - Message Content intent enabled in Discord developer portal
 
@@ -39,6 +39,18 @@ npx prisma migrate dev --name init
 ```bash
 npm run dev
 ```
+
+## Production startup checklist
+
+If you deploy manually (outside Docker Compose), apply migrations before launching the bot:
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm run start
+```
+
+If you skip `prisma:migrate:deploy`, Prisma will throw `P2021` (`GuildSettings` table missing).
 
 ## Admin commands
 

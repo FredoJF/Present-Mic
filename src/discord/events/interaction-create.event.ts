@@ -10,6 +10,10 @@ import { canControlPlayer } from '../../permissions/music-permissions.js';
 import { buildQueueText } from '../../player-channel/queue-message-builder.js';
 import { logger } from '../../utils/logger.js';
 
+function isPrismaMissingTableError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2021';
+}
+
 function nextLoopMode(current: 'off' | 'track' | 'queue'): 'off' | 'track' | 'queue' {
   if (current === 'off') {
     return 'track';
@@ -126,8 +130,12 @@ export function bindInteractionCreateEvent(
     } catch (error) {
       logger.error({ error }, 'Interaction handling failed');
       if (interaction.isRepliable()) {
+        const content = isPrismaMissingTableError(error)
+          ? 'Database is not initialized on this deployment. Run `npm run prisma:migrate:deploy` and restart the bot.'
+          : 'An error happened while handling this interaction.';
+
         const payload = {
-          content: 'An error happened while handling this interaction.',
+          content,
           flags: MessageFlags.Ephemeral as const
         };
         if (interaction.replied || interaction.deferred) {

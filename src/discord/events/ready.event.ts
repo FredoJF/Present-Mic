@@ -5,6 +5,10 @@ import type { MusicService } from '../../music/music-service.js';
 import type { PlayerMessageService } from '../../player-channel/player-message-service.js';
 import { logger } from '../../utils/logger.js';
 
+function isPrismaMissingTableError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2021';
+}
+
 export function bindReadyEvent(
   client: Client,
   settingsRepository: GuildSettingsRepository,
@@ -15,6 +19,17 @@ export function bindReadyEvent(
     logger.info({ user: client.user?.tag }, 'Discord client is ready');
 
     void synchronizePlayerChannels(client, settingsRepository, musicService, playerMessageService).catch((error) => {
+      if (isPrismaMissingTableError(error)) {
+        logger.error(
+          {
+            error,
+            hint: 'Database schema is missing. Run `npm run prisma:migrate:deploy` before starting the bot.'
+          },
+          'Failed to reconcile persistent player messages on startup'
+        );
+        return;
+      }
+
       logger.error({ error }, 'Failed to reconcile persistent player messages on startup');
     });
   });
