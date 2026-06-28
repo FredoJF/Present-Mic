@@ -23,6 +23,11 @@ type OnVoiceConnectionHandler = (
   reason: 'moved' | 'disconnected' | 'reconnected' | 'rejoin-attempt-failed'
 ) => Promise<void> | void;
 
+type ResolveAttempt = {
+  query: string;
+  label: string;
+};
+
 export class LavalinkService {
   private manager: LavalinkManager | null = null;
   private onTrackEndHandler?: OnTrackEndHandler;
@@ -208,18 +213,58 @@ export class LavalinkService {
   public async resolveTracks(input: ResolveTracksInput): Promise<ResolveResult> {
     logger.info({ guildId: input.guildId, query: input.query }, 'Resolving tracks via Lavalink');
     const player = await this.ensurePlayer(input.guildId, input.voiceChannelId, input.textChannelId);
-    const response = (await player.search(
-      {
-        query: input.query
-      },
-      {
-        id: input.requestedByUserId,
-        displayName: input.requestedByDisplayName
-      },
-      false
-    )) as SearchResult;
+    const attempts = this.buildResolveAttempts(input.query);
 
-    const kind: ResolveResult['kind'] = response.loadType === 'playlist' ? 'playlist' : input.query.startsWith('http') ? 'video' : 'search';
+    let response: SearchResult | null = null;
+    let lastError: unknown;
+
+    for (const attempt of attempts) {
+      try {
+        response = (await player.search(
+          {
+            query: attempt.query
+          },
+          {
+            id: input.requestedByUserId,
+            displayName: input.requestedByDisplayName
+          },
+          false
+        )) as SearchResult;
+
+        logger.info(
+          {
+            guildId: input.guildId,
+            attempt: attempt.label,
+            attemptQuery: attempt.query,
+            loadType: response.loadType,
+            tracks: response.tracks.length
+          },
+          'Resolved tracks via Lavalink attempt'
+        );
+
+        if (response.tracks.length > 0) {
+          break;
+        }
+      } catch (error) {
+        lastError = error;
+        logger.warn(
+          {
+            guildId: input.guildId,
+            attempt: attempt.label,
+            attemptQuery: attempt.query,
+            error
+          },
+          'Lavalink resolve attempt failed'
+        );
+      }
+    }
+
+    if (!response) {
+      throw lastError instanceof Error ? lastError : new Error('Lavalink track resolution failed');
+    }
+
+    const kind: ResolveResult['kind'] =
+      response.loadType === 'playlist' ? 'playlist' : input.query.startsWith('http') ? 'video' : 'search';
     const playlistName = response.playlist?.name;
 
     const tracks = response.tracks.map((track) => this.toPlayerTrack(track, input, playlistName));
@@ -228,6 +273,76 @@ export class LavalinkService {
       kind,
       tracks
     };
+  }
+
+  private buildResolveAttempts(rawQuery: string): ResolveAttempt[] {
+    const query = rawQuery.trim();
+    const attempts: ResolveAttempt[] = [];
+    const seen = new Set<string>();
+
+    const pushAttempt = (attemptQuery: string, label: string): void => {
+      const normalized = attemptQuery.trim();
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+
+      seen.add(normalized);
+      attempts.push({ query: normalized, label });
+    };
+
+    const canonicalYoutubeUrl = this.toCanonicalYoutubeWatchUrl(query);
+    if (canonicalYoutubeUrl && canonicalYoutubeUrl !== query) {
+      pushAttempt(canonicalYoutubeUrl, 'canonical-youtube-url');
+    }
+
+    pushAttempt(query, 'original');
+
+    const youtubeVideoId = this.extractYoutubeVideoId(query);
+    if (youtubeVideoId) {
+      pushAttempt(`https://www.youtube.com/watch?v=${youtubeVideoId}`, 'youtube-watch-url');
+      pushAttempt(`https://youtu.be/${youtubeVideoId}`, 'youtube-short-url');
+    }
+
+    return attempts;
+  }
+
+  private extractYoutubeVideoId(query: string): string | null {
+    if (!query.toLowerCase().startsWith('http')) {
+      return null;
+    }
+
+    try {
+      const url = new URL(query);
+      const hostname = url.hostname.toLowerCase();
+      if (hostname === 'youtu.be') {
+        return url.pathname.slice(1) || null;
+      }
+
+      if (hostname.endsWith('youtube.com') || hostname.endsWith('youtube-nocookie.com')) {
+        const directId = url.searchParams.get('v');
+        if (directId) {
+          return directId;
+        }
+
+        const pathMatch = url.pathname.match(/^\/shorts\/([\w-]+)/i);
+        if (pathMatch?.[1]) {
+          return pathMatch[1];
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private toCanonicalYoutubeWatchUrl(query: string): string | null {
+    const videoId = this.extractYoutubeVideoId(query);
+    if (!videoId) {
+      return null;
+    }
+
+    return `https://www.youtube.com/watch?v=${videoId}`;
   }
 
   public async play(

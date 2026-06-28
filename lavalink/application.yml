@@ -5,13 +5,12 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - MUSIC
-      - ANDROID_VR
+      - WEB
       - MWEB
+      - ANDROID
+      - ANDROID_VR
       - IOS
       - TVHTML5_SIMPLY
-      - WEB
-      - WEBEMBEDDED
 
 server:
   port: 2333
@@ -20,7 +19,7 @@ lavalink:
   server:
     password: ${LAVALINK_SERVER_PASSWORD:youshallnotpass}
     sources:
-      youtube: true
+      youtube: false
       bandcamp: true
       soundcloud: false
       twitch: false
