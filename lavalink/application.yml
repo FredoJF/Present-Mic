@@ -1,0 +1,37 @@
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - MUSIC
+      - ANDROID_VR
+      - MWEB
+      - IOS
+      - TVHTML5_SIMPLY
+      - WEB
+      - WEBEMBEDDED
+
+server:
+  port: 2333
+
+lavalink:
+  server:
+    password: ${LAVALINK_SERVER_PASSWORD:youshallnotpass}
+    sources:
+      youtube: false
+      bandcamp: true
+      soundcloud: false
+      twitch: false
+      vimeo: false
+      http: true
+      local: false
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
+      repository: "https://maven.lavalink.dev/releases"
+      snapshot: false
+
+logging:
+  level:
+    root: INFO

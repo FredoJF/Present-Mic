@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+*.pid
+*.seed
+
+# Local databases and generated Prisma artifacts
+*.db
+*.db-journal
+prisma/dev.db
+
+# Docker overrides
+.docker/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode-test/
+.idea/
+*.swp
+*.swo
+
+# GitHub
+.github/

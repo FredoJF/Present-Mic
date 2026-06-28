@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model GuildSettings {
+  guildId          String @id
+  playerChannelId  String?
+  playerMessageId  String?
+  djRoleId         String?
+  cleanupEnabled   Boolean @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
