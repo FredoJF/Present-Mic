@@ -8,7 +8,17 @@ export function bindMessageCreateEvent(client: Client, inputHandler: MessageInpu
     try {
       await inputHandler.handle(message);
     } catch (error) {
-      logger.error({ error }, 'Failed to process message input');
+      logger.error(
+        {
+          error,
+          guildId: message.guild?.id ?? null,
+          channelId: message.channel.id,
+          messageId: message.id,
+          authorId: message.author.id,
+          contentLength: message.content.length
+        },
+        'Failed to process message input'
+      );
     }
   });
 }
