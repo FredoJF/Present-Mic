@@ -1,13 +1,10 @@
 import type { Client } from 'discord.js';
 
+import { isPrismaMissingTableError } from '../../database/prisma-errors.js';
 import type { GuildSettingsRepository } from '../../database/repositories/guild-settings.repository.js';
 import type { MusicService } from '../../music/music-service.js';
 import type { PlayerMessageService } from '../../player-channel/player-message-service.js';
 import { logger } from '../../utils/logger.js';
-
-function isPrismaMissingTableError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2021';
-}
 
 export function bindReadyEvent(
   client: Client,
@@ -18,7 +15,14 @@ export function bindReadyEvent(
   client.once('clientReady', () => {
     logger.info({ user: client.user?.tag }, 'Discord client is ready');
 
-    void synchronizePlayerChannels(client, settingsRepository, musicService, playerMessageService).catch((error) => {
+    // Reconcile persistent player messages after reconnects or restarts so
+    // each configured guild keeps exactly one canonical player message.
+    void synchronizePlayerChannels(
+      client,
+      settingsRepository,
+      musicService,
+      playerMessageService
+    ).catch((error) => {
       if (isPrismaMissingTableError(error)) {
         logger.error(
           {
@@ -44,7 +48,9 @@ async function synchronizePlayerChannels(
   const settingsList = await settingsRepository.listWithPlayerChannel();
 
   for (const settings of settingsList) {
-    const guild = client.guilds.cache.get(settings.guildId) ?? (await client.guilds.fetch(settings.guildId).catch(() => null));
+    const guild =
+      client.guilds.cache.get(settings.guildId) ??
+      (await client.guilds.fetch(settings.guildId).catch(() => null));
     if (!guild || !settings.playerChannelId) {
       continue;
     }

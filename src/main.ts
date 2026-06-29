@@ -10,6 +10,7 @@ import { PlayerMessageService } from './player-channel/player-message-service.js
 import { logger } from './utils/logger.js';
 
 async function bootstrap(): Promise<void> {
+  // Core services.
   const settingsRepository = new GuildSettingsRepository();
   const lavalinkService = new LavalinkService();
   const sourceProvider = new LavalinkSourceProvider(lavalinkService);
@@ -17,6 +18,7 @@ async function bootstrap(): Promise<void> {
   const playerMessageService = new PlayerMessageService();
   const messageInputHandler = new MessageInputHandler(settingsRepository, musicService);
 
+  // Discord client wiring.
   const client = buildDiscordClient(
     settingsRepository,
     musicService,
@@ -24,40 +26,49 @@ async function bootstrap(): Promise<void> {
     playerMessageService
   );
 
+  // Keep the persistent player message in sync with in-memory playback state.
   musicService.onStateChange(async (guildId, state) => {
-    const settings = await settingsRepository.get(guildId);
-    if (!settings?.playerChannelId || !settings.playerMessageId) {
-      return;
-    }
+    try {
+      const settings = await settingsRepository.get(guildId);
+      if (!settings?.playerChannelId || !settings.playerMessageId) {
+        return;
+      }
 
-    const guild = client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId).catch(() => null));
-    if (!guild) {
-      return;
-    }
+      const guild =
+        client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId).catch(() => null));
+      if (!guild) {
+        return;
+      }
 
-    const channel = await guild.channels.fetch(settings.playerChannelId).catch(() => null);
-    if (!channel?.isTextBased()) {
-      return;
-    }
+      const channel = await guild.channels.fetch(settings.playerChannelId).catch(() => null);
+      if (!channel?.isTextBased()) {
+        return;
+      }
 
-    await playerMessageService
-      .updateOrRecreate(channel, settings.playerMessageId, state)
-      .then(async (newMessageId) => {
-        if (newMessageId !== settings.playerMessageId) {
-          await settingsRepository.upsert(guildId, { playerMessageId: newMessageId });
-          logger.info({ guildId, newMessageId }, 'Recreated missing player message during async state update');
-        }
-      })
-      .catch((error) => {
-        logger.warn({ error, guildId }, 'Failed to auto-update persistent player message');
-      });
+      const newMessageId = await playerMessageService.updateOrRecreate(
+        channel,
+        settings.playerMessageId,
+        state
+      );
+
+      if (newMessageId !== settings.playerMessageId) {
+        await settingsRepository.upsert(guildId, { playerMessageId: newMessageId });
+        logger.info(
+          { guildId, newMessageId },
+          'Recreated missing player message during async state update'
+        );
+      }
+    } catch (error) {
+      logger.warn({ error, guildId }, 'Failed to auto-update persistent player message');
+    }
   });
 
+  // Startup sequence.
   await lavalinkService.connect(client);
   await registerCommands();
-
   await client.login(env.DISCORD_TOKEN);
 
+  // Graceful shutdown.
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down');
     await prisma.$disconnect();

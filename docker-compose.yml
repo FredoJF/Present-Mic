@@ -26,4 +26,4 @@ services:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml
       - ./lavalink/plugins:/opt/Lavalink/plugins
     ports:
-      - "2333:2333"
+      - '2333:2333'

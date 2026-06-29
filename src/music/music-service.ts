@@ -17,9 +17,12 @@ export type AddTrackInput = {
 export class MusicService {
   private readonly states = new Map<string, GuildPlayerState>();
   private readonly queue = new QueueService();
-  private readonly stateListeners = new Set<(guildId: string, state: GuildPlayerState) => Promise<void> | void>();
+  private readonly stateListeners = new Set<
+    (guildId: string, state: GuildPlayerState) => Promise<void> | void
+  >();
   private readonly manualStopGuilds = new Set<string>();
   private readonly advancingGuilds = new Set<string>();
+  private readonly startingPlaybackGuilds = new Set<string>();
   private readonly trackWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
   public constructor(
@@ -42,16 +45,62 @@ export class MusicService {
 
     this.lavalink.onIdlePlayback(async (guildId) => {
       const state = this.getState(guildId);
-      if (state.queue.length === 0 || this.manualStopGuilds.has(guildId)) {
+      if (this.manualStopGuilds.has(guildId)) {
+        return;
+      }
+
+      if (this.startingPlaybackGuilds.has(guildId)) {
+        logger.info(
+          {
+            guildId,
+            currentTrack: state.currentTrack?.title ?? null,
+            queueLength: state.queue.length
+          },
+          'Ignoring idle playback signal while a new track is still starting'
+        );
+        return;
+      }
+
+      if (state.queue.length > 0) {
+        logger.warn(
+          {
+            guildId,
+            queueLength: state.queue.length,
+            currentTrack: state.currentTrack?.title ?? null
+          },
+          'Detected idle Lavalink player with queued tracks, forcing auto-advance'
+        );
+
+        await this.advanceToNextTrack(guildId, 'playerUpdate-idle');
+        return;
+      }
+
+      if (!state.currentTrack) {
+        return;
+      }
+
+      if (!this.lavalink.isPlaybackIdle(guildId)) {
+        logger.info(
+          {
+            guildId,
+            currentTrack: state.currentTrack.title,
+            queueLength: state.queue.length
+          },
+          'Ignoring stale idle playback signal because Lavalink already resumed playback'
+        );
         return;
       }
 
       logger.warn(
-        { guildId, queueLength: state.queue.length, currentTrack: state.currentTrack?.title ?? null },
-        'Detected idle Lavalink player with queued tracks, forcing auto-advance'
+        {
+          guildId,
+          currentTrack: state.currentTrack.title,
+          queueLength: state.queue.length
+        },
+        'Detected idle Lavalink player after the last track, resetting player state'
       );
 
-      await this.advanceToNextTrack(guildId, 'playerUpdate-idle');
+      await this.transitionToIdle(guildId, 'playerUpdate-idle-last-track');
     });
 
     this.lavalink.onVoiceConnectionChange(async (guildId, voiceChannelId, reason) => {
@@ -111,13 +160,6 @@ export class MusicService {
     return initial;
   }
 
-  public resetToIdle(guildId: string): GuildPlayerState {
-    const next = createIdleState(guildId);
-    this.states.set(guildId, next);
-    this.emitStateChange(guildId);
-    return next;
-  }
-
   public async addFromInput(input: AddTrackInput): Promise<{ added: Track[]; kind: string }> {
     const state = this.getState(input.guildId);
     logger.info(
@@ -141,7 +183,9 @@ export class MusicService {
     // Keep the current playback voice channel stable while music is active.
     // This avoids accidental player moves/stops when someone queues from another channel.
     const activeVoiceChannelId =
-      hasActivePlaybackContext && state.voiceChannelId ? state.voiceChannelId : input.voiceChannelId;
+      hasActivePlaybackContext && state.voiceChannelId
+        ? state.voiceChannelId
+        : input.voiceChannelId;
 
     state.voiceChannelId = activeVoiceChannelId;
 
@@ -212,7 +256,12 @@ export class MusicService {
         return null;
       }
 
-      await this.lavalink.play(guildId, state.voiceChannelId, state.textChannelId, state.currentTrack);
+      await this.startTrackPlayback(
+        guildId,
+        state.voiceChannelId,
+        state.textChannelId,
+        state.currentTrack
+      );
       state.isPlaying = true;
       state.isPaused = false;
       this.emitStateChange(guildId);
@@ -225,20 +274,15 @@ export class MusicService {
 
     const next = this.queue.popNext(state);
     if (!next) {
-      logger.info({ guildId }, 'Queue empty in playNext, destroying player');
-      await this.lavalink.destroy(guildId).catch((error) => {
-        logger.warn({ error, guildId }, 'Failed to destroy lavalink player after queue end');
-      });
-
-      state.currentTrack = null;
-      state.isPlaying = false;
-      state.isPaused = false;
-      state.voiceChannelId = null;
-      this.emitStateChange(guildId);
+      logger.info({ guildId }, 'Queue empty in playNext, resetting player to idle');
+      await this.transitionToIdle(guildId, 'queue-ended');
       return null;
     }
 
-    logger.info({ guildId, nextTitle: next.title, remainingQueueLength: state.queue.length }, 'Selected next track');
+    logger.info(
+      { guildId, nextTitle: next.title, remainingQueueLength: state.queue.length },
+      'Selected next track'
+    );
 
     if (!state.voiceChannelId) {
       state.voiceChannelId = this.lavalink.getVoiceChannelId(guildId);
@@ -266,7 +310,7 @@ export class MusicService {
       return null;
     }
 
-    await this.lavalink.play(guildId, state.voiceChannelId, state.textChannelId, next);
+    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, next);
     logger.info({ guildId, title: next.title }, 'Started next track playback');
     this.scheduleTrackWatchdog(guildId, next);
     state.isPlaying = true;
@@ -286,7 +330,7 @@ export class MusicService {
       return null;
     }
 
-    await this.lavalink.play(guildId, state.voiceChannelId, state.textChannelId, prev);
+    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, prev);
     state.isPlaying = true;
     state.isPaused = false;
     this.emitStateChange(guildId);
@@ -380,7 +424,10 @@ export class MusicService {
 
   private async advanceToNextTrack(guildId: string, reason: string): Promise<void> {
     if (this.advancingGuilds.has(guildId)) {
-      logger.debug({ guildId, reason }, 'Skipping duplicate auto-advance while another transition is running');
+      logger.debug(
+        { guildId, reason },
+        'Skipping duplicate auto-advance while another transition is running'
+      );
       return;
     }
 
@@ -388,7 +435,10 @@ export class MusicService {
     try {
       logger.info({ guildId, reason }, 'Auto-advancing to next track');
       const next = await this.playNext(guildId);
-      logger.info({ guildId, reason, advanced: Boolean(next), nextTitle: next?.title ?? null }, 'Auto-advance result');
+      logger.info(
+        { guildId, reason, advanced: Boolean(next), nextTitle: next?.title ?? null },
+        'Auto-advance result'
+      );
     } catch (error) {
       logger.error({ error, guildId, reason }, 'Failed to chain next track after track end event');
     } finally {
@@ -405,7 +455,22 @@ export class MusicService {
       const stillOnSameTrack = state.currentTrack?.id === track.id;
       const hasNext = state.queue.length > 0;
 
-      if (!stillOnSameTrack || state.isPaused || !hasNext) {
+      if (!stillOnSameTrack || state.isPaused) {
+        return;
+      }
+
+      if (!hasNext) {
+        logger.warn(
+          {
+            guildId,
+            currentTrack: state.currentTrack?.title ?? null,
+            queueLength: state.queue.length,
+            expectedDurationMs: track.durationMs
+          },
+          'Track-end watchdog triggered fallback idle reset after the final track'
+        );
+
+        void this.transitionToIdle(guildId, 'watchdog-final-track-timeout');
         return;
       }
 
@@ -433,5 +498,41 @@ export class MusicService {
 
     clearTimeout(existing);
     this.trackWatchdogs.delete(guildId);
+  }
+
+  private async startTrackPlayback(
+    guildId: string,
+    voiceChannelId: string,
+    textChannelId: string,
+    track: Track
+  ): Promise<void> {
+    this.startingPlaybackGuilds.add(guildId);
+
+    try {
+      await this.lavalink.play(guildId, voiceChannelId, textChannelId, track);
+    } finally {
+      this.startingPlaybackGuilds.delete(guildId);
+    }
+  }
+
+  private async transitionToIdle(guildId: string, reason: string): Promise<void> {
+    const state = this.getState(guildId);
+
+    this.clearTrackWatchdog(guildId);
+
+    await this.lavalink.destroy(guildId).catch((error) => {
+      logger.warn(
+        { error, guildId, reason },
+        'Failed to destroy lavalink player while resetting to idle'
+      );
+    });
+
+    state.currentTrack = null;
+    state.isPlaying = false;
+    state.isPaused = false;
+    state.voiceChannelId = null;
+    this.emitStateChange(guildId);
+
+    logger.info({ guildId, reason }, 'Player state reset to idle');
   }
 }

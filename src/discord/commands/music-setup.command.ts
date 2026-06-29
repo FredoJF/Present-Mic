@@ -1,6 +1,5 @@
 import {
   ChannelType,
-  MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction
@@ -31,22 +30,31 @@ export const musicSetupCommand = new SlashCommandBuilder()
     sub
       .setName('set-dj-role')
       .setDescription('Set optional DJ role')
-      .addRoleOption((option) => option.setName('role').setDescription('Role allowed to control player').setRequired(true))
+      .addRoleOption((option) =>
+        option.setName('role').setDescription('Role allowed to control player').setRequired(true)
+      )
   )
-  .addSubcommand((sub) => sub.setName('unset-dj-role').setDescription('Disable DJ role restriction'))
+  .addSubcommand((sub) =>
+    sub.setName('unset-dj-role').setDescription('Disable DJ role restriction')
+  )
   .addSubcommand((sub) =>
     sub
       .setName('cleanup')
       .setDescription('Toggle deletion of processed messages in player channel')
-      .addBooleanOption((option) => option.setName('enabled').setDescription('Enable automatic cleanup').setRequired(true))
+      .addBooleanOption((option) =>
+        option.setName('enabled').setDescription('Enable automatic cleanup').setRequired(true)
+      )
   )
-  .addSubcommand((sub) => sub.setName('status').setDescription('Show current guild music configuration'));
+  .addSubcommand((sub) =>
+    sub.setName('status').setDescription('Show current guild music configuration')
+  );
 
 export async function executeMusicSetupCommand(
   interaction: ChatInputCommandInteraction,
   settingsRepository: GuildSettingsRepository,
   playerMessageService: PlayerMessageService
 ): Promise<void> {
+  // Global guard.
   if (!interaction.guild) {
     await interaction.editReply({ content: 'This command can only run in a server.' });
     return;
@@ -54,6 +62,7 @@ export async function executeMusicSetupCommand(
 
   const sub = interaction.options.getSubcommand();
 
+  // Channel bootstrap and player-message reset.
   if (sub === 'setup') {
     const channel = interaction.options.getChannel('channel', true);
     if (channel.type !== ChannelType.GuildText) {
@@ -63,7 +72,9 @@ export async function executeMusicSetupCommand(
 
     const currentSettings = await settingsRepository.getOrCreate(interaction.guild.id);
     if (currentSettings.playerChannelId && currentSettings.playerChannelId !== channel.id) {
-      const previousChannel = await interaction.guild.channels.fetch(currentSettings.playerChannelId).catch(() => null);
+      const previousChannel = await interaction.guild.channels
+        .fetch(currentSettings.playerChannelId)
+        .catch(() => null);
       if (previousChannel?.isTextBased() && !previousChannel.isDMBased()) {
         await playerMessageService.cleanupChannel(previousChannel as GuildTextBasedChannel);
       }
@@ -75,8 +86,7 @@ export async function executeMusicSetupCommand(
     );
     await settingsRepository.upsert(interaction.guild.id, {
       playerChannelId: channel.id,
-      playerMessageId: playerMessage.id,
-      cleanupEnabled: true
+      playerMessageId: playerMessage.id
     });
 
     await interaction.editReply({
@@ -112,6 +122,7 @@ export async function executeMusicSetupCommand(
     return;
   }
 
+  // Access control configuration.
   if (sub === 'set-dj-role') {
     const role = interaction.options.getRole('role', true);
     await settingsRepository.upsert(interaction.guild.id, { djRoleId: role.id });
@@ -125,9 +136,9 @@ export async function executeMusicSetupCommand(
     return;
   }
 
+  // Cleanup is intentionally fixed on for the single-channel UX.
   if (sub === 'cleanup') {
     const enabled = interaction.options.getBoolean('enabled', true);
-    await settingsRepository.upsert(interaction.guild.id, { cleanupEnabled: true });
     await interaction.editReply({
       content: enabled
         ? 'Player-channel user message cleanup is always enabled.'
@@ -136,6 +147,7 @@ export async function executeMusicSetupCommand(
     return;
   }
 
+  // Fallback status view for `/music status`.
   const status = await settingsRepository.getOrCreate(interaction.guild.id);
   await interaction.editReply({
     content: [

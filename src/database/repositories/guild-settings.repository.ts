@@ -6,7 +6,6 @@ export type GuildSettingsPatch = {
   playerChannelId?: string | null;
   playerMessageId?: string | null;
   djRoleId?: string | null;
-  cleanupEnabled?: boolean;
 };
 
 export class GuildSettingsRepository {

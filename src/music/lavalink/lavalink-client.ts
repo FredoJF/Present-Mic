@@ -1,4 +1,9 @@
-import { LavalinkManager, type SearchResult, type Track, type TrackEndReason } from 'lavalink-client';
+import {
+  LavalinkManager,
+  type SearchResult,
+  type Track,
+  type TrackEndReason
+} from 'lavalink-client';
 import type { Client } from 'discord.js';
 
 import { env } from '../../config/env.js';
@@ -15,7 +20,10 @@ type ResolveTracksInput = {
   requestedByDisplayName: string;
 };
 
-type OnTrackEndHandler = (guildId: string, reason: TrackEndReason | 'trackError' | 'trackStuck') => Promise<void> | void;
+type OnTrackEndHandler = (
+  guildId: string,
+  reason: TrackEndReason | 'trackError' | 'trackStuck'
+) => Promise<void> | void;
 type OnIdlePlaybackHandler = (guildId: string) => Promise<void> | void;
 type OnVoiceConnectionHandler = (
   guildId: string,
@@ -113,7 +121,9 @@ export class LavalinkService {
           ? (payload.exception as { message?: string } | undefined)?.message
           : undefined;
 
-      const isGeoBlocked = rawMessage?.toLowerCase().includes('not made this video available in your country');
+      const isGeoBlocked = rawMessage
+        ?.toLowerCase()
+        .includes('not made this video available in your country');
 
       if (isGeoBlocked) {
         logger.warn(
@@ -155,13 +165,19 @@ export class LavalinkService {
     });
 
     manager.on('playerDisconnect', async (player, voiceChannelId) => {
-      logger.warn({ guildId: player.guildId, voiceChannelId }, 'Player disconnected from voice channel');
+      logger.warn(
+        { guildId: player.guildId, voiceChannelId },
+        'Player disconnected from voice channel'
+      );
       await this.onVoiceConnectionHandler?.(player.guildId, null, 'disconnected');
       void this.tryRejoinPlayer(player.guildId, voiceChannelId);
     });
 
     manager.on('playerReconnect', async (player, voiceChannelId) => {
-      logger.info({ guildId: player.guildId, voiceChannelId }, 'Player reconnected to voice channel');
+      logger.info(
+        { guildId: player.guildId, voiceChannelId },
+        'Player reconnected to voice channel'
+      );
       this.desiredVoiceChannels.set(player.guildId, voiceChannelId);
       await this.onVoiceConnectionHandler?.(player.guildId, voiceChannelId, 'reconnected');
     });
@@ -183,7 +199,10 @@ export class LavalinkService {
         return;
       }
 
-      logger.warn({ guildId: player.guildId }, 'Lavalink player is idle, invoking idle playback handler');
+      logger.warn(
+        { guildId: player.guildId },
+        'Lavalink player is idle, invoking idle playback handler'
+      );
       await this.onIdlePlaybackHandler?.(player.guildId);
     });
 
@@ -212,7 +231,11 @@ export class LavalinkService {
 
   public async resolveTracks(input: ResolveTracksInput): Promise<ResolveResult> {
     logger.info({ guildId: input.guildId, query: input.query }, 'Resolving tracks via Lavalink');
-    const player = await this.ensurePlayer(input.guildId, input.voiceChannelId, input.textChannelId);
+    const player = await this.ensurePlayer(
+      input.guildId,
+      input.voiceChannelId,
+      input.textChannelId
+    );
     const attempts = this.buildResolveAttempts(input.query);
 
     let response: SearchResult | null = null;
@@ -264,10 +287,16 @@ export class LavalinkService {
     }
 
     const kind: ResolveResult['kind'] =
-      response.loadType === 'playlist' ? 'playlist' : input.query.startsWith('http') ? 'video' : 'search';
+      response.loadType === 'playlist'
+        ? 'playlist'
+        : input.query.startsWith('http')
+          ? 'video'
+          : 'search';
     const playlistName = response.playlist?.name;
+    const resolvedTracks =
+      kind === 'search' ? response.tracks.slice(0, 1) : response.tracks;
 
-    const tracks = response.tracks.map((track) => this.toPlayerTrack(track, input, playlistName));
+    const tracks = resolvedTracks.map((track) => this.toPlayerTrack(track, input, playlistName));
 
     return {
       kind,
@@ -440,6 +469,15 @@ export class LavalinkService {
     return this.manager?.getPlayer(guildId)?.textChannelId ?? null;
   }
 
+  public isPlaybackIdle(guildId: string): boolean {
+    const player = this.manager?.getPlayer(guildId);
+    if (!player) {
+      return true;
+    }
+
+    return !player.playing && !player.paused && !player.queue.current;
+  }
+
   private async ensurePlayer(guildId: string, voiceChannelId: string, textChannelId: string) {
     const manager = this.manager;
     if (!manager) {
@@ -478,7 +516,9 @@ export class LavalinkService {
       return;
     }
 
-    const hasPlaybackContext = Boolean(player.queue.current || player.queue.tracks.length > 0 || player.playing);
+    const hasPlaybackContext = Boolean(
+      player.queue.current || player.queue.tracks.length > 0 || player.playing
+    );
     if (!hasPlaybackContext) {
       return;
     }
@@ -518,7 +558,11 @@ export class LavalinkService {
     });
   }
 
-  private toPlayerTrack(track: Track, input: ResolveTracksInput, playlistName?: string): Omit<PlayerTrack, 'id'> {
+  private toPlayerTrack(
+    track: Track,
+    input: ResolveTracksInput,
+    playlistName?: string
+  ): Omit<PlayerTrack, 'id'> {
     const base: Omit<PlayerTrack, 'id'> = {
       title: track.info.title,
       url: track.info.uri,

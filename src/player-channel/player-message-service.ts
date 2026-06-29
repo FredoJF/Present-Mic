@@ -1,6 +1,9 @@
 import type { GuildTextBasedChannel, Message } from 'discord.js';
 
-import { PLAYER_BUTTON_IDS, createPlayerControlsRows } from '../discord/components/player-buttons.js';
+import {
+  PLAYER_BUTTON_IDS,
+  createPlayerControlsRows
+} from '../discord/components/player-buttons.js';
 import { createIdleState, type GuildPlayerState } from '../music/player-state.js';
 import { PlayerMessageBuilder } from './player-message-builder.js';
 
@@ -38,7 +41,11 @@ export class PlayerMessageService {
     return created;
   }
 
-  public async update(channel: GuildTextBasedChannel, messageId: string, state: GuildPlayerState): Promise<void> {
+  public async update(
+    channel: GuildTextBasedChannel,
+    messageId: string,
+    state: GuildPlayerState
+  ): Promise<void> {
     const message = await channel.messages.fetch(messageId);
     await this.renderMessage(message, state);
   }
@@ -57,7 +64,10 @@ export class PlayerMessageService {
     }
   }
 
-  public async cleanupChannel(channel: GuildTextBasedChannel, keepMessageId?: string | null): Promise<void> {
+  public async cleanupChannel(
+    channel: GuildTextBasedChannel,
+    keepMessageId?: string | null
+  ): Promise<void> {
     const botUserId = channel.client.user?.id;
     if (!botUserId) {
       return;
@@ -65,7 +75,7 @@ export class PlayerMessageService {
 
     let before: string | undefined;
 
-    while (true) {
+    for (;;) {
       const messages = before
         ? await channel.messages.fetch({ limit: 100, before })
         : await channel.messages.fetch({ limit: 100 });
@@ -103,12 +113,16 @@ export class PlayerMessageService {
     }
   }
 
-  private async findReusablePlayerMessage(channel: GuildTextBasedChannel): Promise<Message<true> | null> {
+  private async findReusablePlayerMessage(
+    channel: GuildTextBasedChannel
+  ): Promise<Message<true> | null> {
     const botUserId = channel.client.user?.id;
     if (!botUserId) {
       return null;
     }
 
+    // Reuse an existing bot-authored control message when possible to avoid
+    // stacking duplicate persistent players after restarts or partial cleanup.
     const messages = await channel.messages.fetch({ limit: 100 });
     return messages.find((message) => this.isReusablePlayerMessage(message, botUserId)) ?? null;
   }
@@ -124,7 +138,9 @@ export class PlayerMessageService {
       }
 
       return row.components.flatMap((component) =>
-        'customId' in component && typeof component.customId === 'string' ? [component.customId] : []
+        'customId' in component && typeof component.customId === 'string'
+          ? [component.customId]
+          : []
       );
     });
 

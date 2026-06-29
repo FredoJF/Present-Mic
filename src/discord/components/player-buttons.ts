@@ -21,8 +21,14 @@ export function createPlayerControlsRows(): ActionRowBuilder<ButtonBuilder>[] {
       .setCustomId(PLAYER_BUTTON_IDS.previous)
       .setLabel('Previous')
       .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(PLAYER_BUTTON_IDS.next).setLabel('Next').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(PLAYER_BUTTON_IDS.stop).setLabel('Stop').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder()
+      .setCustomId(PLAYER_BUTTON_IDS.next)
+      .setLabel('Next')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(PLAYER_BUTTON_IDS.stop)
+      .setLabel('Stop')
+      .setStyle(ButtonStyle.Danger)
   );
 
   const rowTwo = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -30,9 +36,18 @@ export function createPlayerControlsRows(): ActionRowBuilder<ButtonBuilder>[] {
       .setCustomId(PLAYER_BUTTON_IDS.shuffle)
       .setLabel('Shuffle')
       .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(PLAYER_BUTTON_IDS.clear).setLabel('Clear').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(PLAYER_BUTTON_IDS.queue).setLabel('Queue').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(PLAYER_BUTTON_IDS.loop).setLabel('Loop').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder()
+      .setCustomId(PLAYER_BUTTON_IDS.clear)
+      .setLabel('Clear')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(PLAYER_BUTTON_IDS.queue)
+      .setLabel('Queue')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(PLAYER_BUTTON_IDS.loop)
+      .setLabel('Loop')
+      .setStyle(ButtonStyle.Secondary)
   );
 
   return [rowOne, rowTwo];

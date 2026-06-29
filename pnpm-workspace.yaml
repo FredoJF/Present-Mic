@@ -1,7 +1,9 @@
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
+  better-sqlite3: true
   esbuild: true
   prisma: true
 minimumReleaseAgeExclude:
   - prettier@3.9.1
+  - prettier@3.9.3

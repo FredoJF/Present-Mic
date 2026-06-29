@@ -27,8 +27,8 @@ lavalink:
       http: true
       local: false
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
-      repository: "https://maven.lavalink.dev/releases"
+    - dependency: 'dev.lavalink.youtube:youtube-plugin:1.18.1'
+      repository: 'https://maven.lavalink.dev/releases'
       snapshot: false
 
 logging:
