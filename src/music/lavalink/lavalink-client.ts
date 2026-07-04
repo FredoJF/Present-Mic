@@ -1,5 +1,6 @@
 import {
   LavalinkManager,
+  type Player,
   type SearchResult,
   type Track,
   type TrackEndReason
@@ -36,6 +37,9 @@ type ResolveAttempt = {
   label: string;
 };
 
+const NORMALIZATION_MAX_AMPLITUDE = 0.75;
+const NORMALIZATION_ADAPTIVE = true;
+
 export class LavalinkService {
   private manager: LavalinkManager | null = null;
   private onTrackEndHandler?: OnTrackEndHandler;
@@ -43,6 +47,7 @@ export class LavalinkService {
   private onVoiceConnectionHandler?: OnVoiceConnectionHandler;
   private readonly desiredVoiceChannels = new Map<string, string>();
   private readonly reconnectingGuilds = new Set<string>();
+  private readonly normalizationUnavailableNodes = new Set<string>();
 
   public onTrackEnd(handler: OnTrackEndHandler): void {
     this.onTrackEndHandler = handler;
@@ -502,7 +507,60 @@ export class LavalinkService {
       await player.connect();
     }
 
+    await this.applyDefaultAudioFilters(player);
     return player;
+  }
+
+  private async applyDefaultAudioFilters(player: Player): Promise<void> {
+    if (player.filterManager.filters.lavalinkLavaDspxPlugin.normalization) {
+      return;
+    }
+
+    const nodeId = player.node.id;
+    if (this.normalizationUnavailableNodes.has(nodeId)) {
+      return;
+    }
+
+    const hasNormalizationFilter = player.node.info?.filters?.includes('normalization');
+    const hasLavaDspxPlugin = player.node.info?.plugins?.some(
+      (plugin) => plugin.name === 'lavadspx-plugin'
+    );
+
+    if (!hasNormalizationFilter || !hasLavaDspxPlugin) {
+      this.normalizationUnavailableNodes.add(nodeId);
+      logger.info(
+        {
+          guildId: player.guildId,
+          nodeId,
+          hasNormalizationFilter: Boolean(hasNormalizationFilter),
+          hasLavaDspxPlugin: Boolean(hasLavaDspxPlugin)
+        },
+        'Skipping audio normalization because the Lavalink node does not support it'
+      );
+      return;
+    }
+
+    try {
+      await player.filterManager.lavalinkLavaDspxPlugin.toggleNormalization(
+        NORMALIZATION_MAX_AMPLITUDE,
+        NORMALIZATION_ADAPTIVE
+      );
+      logger.info(
+        {
+          guildId: player.guildId,
+          nodeId,
+          maxAmplitude: NORMALIZATION_MAX_AMPLITUDE,
+          adaptive: NORMALIZATION_ADAPTIVE
+        },
+        'Enabled audio normalization filter'
+      );
+    } catch (error) {
+      this.normalizationUnavailableNodes.add(nodeId);
+      logger.warn(
+        { error, guildId: player.guildId, nodeId },
+        'Failed to enable audio normalization filter'
+      );
+    }
   }
 
   private async tryRejoinPlayer(guildId: string, disconnectedChannelId: string): Promise<void> {

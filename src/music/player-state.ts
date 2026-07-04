@@ -40,3 +40,16 @@ export function createIdleState(guildId: string): GuildPlayerState {
     queue: []
   };
 }
+
+function cloneTrack(track: Track): Track {
+  return { ...track };
+}
+
+export function clonePlayerState(state: GuildPlayerState): GuildPlayerState {
+  return {
+    ...state,
+    currentTrack: state.currentTrack ? cloneTrack(state.currentTrack) : null,
+    history: state.history.map(cloneTrack),
+    queue: state.queue.map(cloneTrack)
+  };
+}

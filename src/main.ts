@@ -45,6 +45,10 @@ async function bootstrap(): Promise<void> {
         return;
       }
 
+      if (playerMessageService.shouldSkipBackgroundRefresh(settings.playerMessageId)) {
+        return;
+      }
+
       const newMessageId = await playerMessageService.updateOrRecreate(
         channel,
         settings.playerMessageId,

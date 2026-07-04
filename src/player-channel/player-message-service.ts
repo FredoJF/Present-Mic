@@ -4,41 +4,33 @@ import {
   PLAYER_BUTTON_IDS,
   createPlayerControlsRows
 } from '../discord/components/player-buttons.js';
-import { createIdleState, type GuildPlayerState } from '../music/player-state.js';
+import { clonePlayerState, createIdleState, type GuildPlayerState } from '../music/player-state.js';
 import { PlayerMessageBuilder } from './player-message-builder.js';
+
+const IMMEDIATE_UPDATE_TTL_MS = 1500;
+
+type ImmediateRenderTask = {
+  message: Message;
+  state: GuildPlayerState;
+};
 
 export class PlayerMessageService {
   private readonly builder = new PlayerMessageBuilder();
   private readonly playerButtonIds = new Set<string>(Object.values(PLAYER_BUTTON_IDS));
+  private readonly channelUpdateChains = new Map<string, Promise<unknown>>();
+  private readonly recentImmediateUpdates = new Map<string, number>();
+  private readonly pendingImmediateRenders = new Map<string, ImmediateRenderTask>();
+  private readonly runningImmediateRenders = new Set<string>();
 
   public async ensureMessage(
     channel: GuildTextBasedChannel,
     existingMessageId?: string | null,
     state?: GuildPlayerState
   ): Promise<Message<true>> {
-    const renderState = this.resolveState(channel, state);
-    const knownMessage = await this.fetchKnownMessage(channel, existingMessageId);
-
-    if (knownMessage) {
-      await this.renderMessage(knownMessage, renderState);
-      await this.cleanupChannel(channel, knownMessage.id);
-      return knownMessage;
-    }
-
-    const reusableMessage = await this.findReusablePlayerMessage(channel);
-    if (reusableMessage) {
-      await this.renderMessage(reusableMessage, renderState);
-      await this.cleanupChannel(channel, reusableMessage.id);
-      return reusableMessage;
-    }
-
-    const created = await channel.send({
-      embeds: [this.builder.build(renderState)],
-      components: createPlayerControlsRows()
-    });
-
-    await this.cleanupChannel(channel, created.id);
-    return created;
+    const stateSnapshot = state ? clonePlayerState(state) : undefined;
+    return this.enqueueChannelUpdate(channel.id, () =>
+      this.ensureMessageInternal(channel, existingMessageId, stateSnapshot)
+    );
   }
 
   public async update(
@@ -46,8 +38,65 @@ export class PlayerMessageService {
     messageId: string,
     state: GuildPlayerState
   ): Promise<void> {
-    const message = await channel.messages.fetch(messageId);
-    await this.renderMessage(message, state);
+    const stateSnapshot = clonePlayerState(state);
+    await this.enqueueChannelUpdate(channel.id, async () => {
+      const message = await channel.messages.fetch(messageId);
+      await this.renderMessage(message, stateSnapshot);
+    });
+  }
+
+  public async updateMessage(message: Message, state: GuildPlayerState): Promise<void> {
+    const stateSnapshot = clonePlayerState(state);
+    await this.enqueueChannelUpdate(message.channelId, async () => {
+      await this.renderMessage(message, stateSnapshot);
+    });
+  }
+
+  public async updateMessageImmediate(message: Message, state: GuildPlayerState): Promise<void> {
+    this.recentImmediateUpdates.set(message.id, Date.now());
+    await this.enqueueImmediateRender(message, clonePlayerState(state));
+  }
+
+  public shouldSkipBackgroundRefresh(messageId: string): boolean {
+    const updatedAt = this.recentImmediateUpdates.get(messageId);
+    if (!updatedAt) {
+      return false;
+    }
+
+    if (Date.now() - updatedAt > IMMEDIATE_UPDATE_TTL_MS) {
+      this.recentImmediateUpdates.delete(messageId);
+      return false;
+    }
+
+    this.recentImmediateUpdates.delete(messageId);
+    return true;
+  }
+
+  private async enqueueImmediateRender(message: Message, state: GuildPlayerState): Promise<void> {
+    const channelId = message.channelId;
+    this.pendingImmediateRenders.set(channelId, {
+      message,
+      state
+    });
+
+    if (this.runningImmediateRenders.has(channelId)) {
+      return;
+    }
+
+    this.runningImmediateRenders.add(channelId);
+    try {
+      for (;;) {
+        const nextRender = this.pendingImmediateRenders.get(channelId);
+        if (!nextRender) {
+          return;
+        }
+
+        this.pendingImmediateRenders.delete(channelId);
+        await this.renderMessage(nextRender.message, nextRender.state);
+      }
+    } finally {
+      this.runningImmediateRenders.delete(channelId);
+    }
   }
 
   public async updateOrRecreate(
@@ -55,13 +104,17 @@ export class PlayerMessageService {
     messageId: string,
     state: GuildPlayerState
   ): Promise<string> {
-    try {
-      await this.update(channel, messageId, state);
-      return messageId;
-    } catch {
-      const recreated = await this.ensureMessage(channel, null, state);
-      return recreated.id;
-    }
+    const stateSnapshot = clonePlayerState(state);
+    return this.enqueueChannelUpdate(channel.id, async () => {
+      try {
+        const message = await channel.messages.fetch(messageId);
+        await this.renderMessage(message, stateSnapshot);
+        return messageId;
+      } catch {
+        const recreated = await this.ensureMessageInternal(channel, null, stateSnapshot);
+        return recreated.id;
+      }
+    });
   }
 
   public async cleanupChannel(
@@ -147,18 +200,57 @@ export class PlayerMessageService {
     return customIds.some((customId) => this.playerButtonIds.has(customId));
   }
 
-  private async renderMessage(message: Message<true>, state: GuildPlayerState): Promise<void> {
-    await message.edit({
-      embeds: [this.builder.build(state)],
+  private async renderMessage(message: Message, state: GuildPlayerState): Promise<void> {
+    await message.edit(this.buildMessagePayload(state));
+  }
+
+  private async ensureMessageInternal(
+    channel: GuildTextBasedChannel,
+    existingMessageId?: string | null,
+    state?: GuildPlayerState
+  ): Promise<Message<true>> {
+    const renderState = state ?? this.buildIdleRenderState(channel);
+    const knownMessage =
+      (await this.fetchKnownMessage(channel, existingMessageId)) ??
+      (await this.findReusablePlayerMessage(channel));
+    if (knownMessage) {
+      await this.renderMessage(knownMessage, renderState);
+      await this.cleanupChannel(channel, knownMessage.id);
+      return knownMessage;
+    }
+
+    const created = await channel.send({
+      ...this.buildMessagePayload(renderState)
+    });
+
+    await this.cleanupChannel(channel, created.id);
+    return created;
+  }
+
+  private buildMessagePayload(state: GuildPlayerState): {
+    embeds: ReturnType<PlayerMessageBuilder['build']>;
+    components: ReturnType<typeof createPlayerControlsRows>;
+  } {
+    return {
+      embeds: this.builder.build(state),
       components: createPlayerControlsRows()
+    };
+  }
+
+  private enqueueChannelUpdate<T>(channelId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.channelUpdateChains.get(channelId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(operation);
+
+    this.channelUpdateChains.set(channelId, next);
+
+    return next.finally(() => {
+      if (this.channelUpdateChains.get(channelId) === next) {
+        this.channelUpdateChains.delete(channelId);
+      }
     });
   }
 
-  private resolveState(channel: GuildTextBasedChannel, state?: GuildPlayerState): GuildPlayerState {
-    if (state) {
-      return state;
-    }
-
+  private buildIdleRenderState(channel: GuildTextBasedChannel): GuildPlayerState {
     return {
       ...createIdleState(channel.guild.id),
       textChannelId: channel.id

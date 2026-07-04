@@ -1,5 +1,5 @@
 import type { GuildPlayerState, LoopMode, Track } from './player-state.js';
-import { createIdleState } from './player-state.js';
+import { clonePlayerState, createIdleState } from './player-state.js';
 import { QueueService } from './queue-service.js';
 import type { SourceProvider } from './source-provider.js';
 import type { LavalinkService } from './lavalink/lavalink-client.js';
@@ -256,15 +256,16 @@ export class MusicService {
         return null;
       }
 
+      state.isPlaying = true;
+      state.isPaused = false;
+      this.emitStateChange(guildId);
+
       await this.startTrackPlayback(
         guildId,
         state.voiceChannelId,
         state.textChannelId,
         state.currentTrack
       );
-      state.isPlaying = true;
-      state.isPaused = false;
-      this.emitStateChange(guildId);
       return state.currentTrack;
     }
 
@@ -310,12 +311,13 @@ export class MusicService {
       return null;
     }
 
-    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, next);
-    logger.info({ guildId, title: next.title }, 'Started next track playback');
-    this.scheduleTrackWatchdog(guildId, next);
     state.isPlaying = true;
     state.isPaused = false;
     this.emitStateChange(guildId);
+
+    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, next);
+    logger.info({ guildId, title: next.title }, 'Started next track playback');
+    this.scheduleTrackWatchdog(guildId, next);
     return next;
   }
 
@@ -330,10 +332,11 @@ export class MusicService {
       return null;
     }
 
-    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, prev);
     state.isPlaying = true;
     state.isPaused = false;
     this.emitStateChange(guildId);
+
+    await this.startTrackPlayback(guildId, state.voiceChannelId, state.textChannelId, prev);
     return prev;
   }
 
@@ -343,10 +346,11 @@ export class MusicService {
       return;
     }
 
-    await this.lavalink.pause(guildId);
     state.isPaused = true;
     state.isPlaying = false;
     this.emitStateChange(guildId);
+
+    await this.lavalink.pause(guildId);
   }
 
   public async resume(guildId: string): Promise<void> {
@@ -355,10 +359,11 @@ export class MusicService {
       return;
     }
 
-    await this.lavalink.resume(guildId);
     state.isPaused = false;
     state.isPlaying = true;
     this.emitStateChange(guildId);
+
+    await this.lavalink.resume(guildId);
   }
 
   public async stop(guildId: string): Promise<void> {
@@ -366,13 +371,13 @@ export class MusicService {
     this.clearTrackWatchdog(guildId);
     this.manualStopGuilds.add(guildId);
     try {
-      await this.lavalink.stop(guildId);
       state.currentTrack = null;
       state.queue = [];
       state.history = [];
       state.isPlaying = false;
       state.isPaused = false;
       this.emitStateChange(guildId);
+      await this.lavalink.stop(guildId);
     } finally {
       this.manualStopGuilds.delete(guildId);
     }
@@ -414,7 +419,7 @@ export class MusicService {
   }
 
   private emitStateChange(guildId: string): void {
-    const state = this.getState(guildId);
+    const state = clonePlayerState(this.getState(guildId));
     for (const listener of this.stateListeners) {
       Promise.resolve(listener(guildId, state)).catch((error) => {
         logger.error({ error, guildId }, 'MusicService state listener failed');

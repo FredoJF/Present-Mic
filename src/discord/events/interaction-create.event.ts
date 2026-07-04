@@ -14,7 +14,6 @@ import { PLAYER_BUTTON_IDS } from '../components/player-buttons.js';
 import type { MusicService } from '../../music/music-service.js';
 import type { PlayerMessageService } from '../../player-channel/player-message-service.js';
 import { canControlPlayer } from '../../permissions/music-permissions.js';
-import { buildQueueText } from '../../player-channel/queue-message-builder.js';
 import { logger } from '../../utils/logger.js';
 
 function nextLoopMode(current: 'off' | 'track' | 'queue'): 'off' | 'track' | 'queue' {
@@ -111,105 +110,90 @@ async function handlePlayerButtonInteraction(
   musicService: MusicService,
   playerMessageService: PlayerMessageService
 ): Promise<void> {
-  const queueRequested = interaction.customId === PLAYER_BUTTON_IDS.queue;
-
-  if (queueRequested) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  } else {
-    await interaction.deferUpdate();
-  }
+  await interaction.deferUpdate();
 
   const settings = await settingsRepository.getOrCreate(interaction.guild.id);
   if (!canControlPlayer({ member: interaction.member, djRoleId: settings.djRoleId })) {
-    await replyDeniedControl(interaction, queueRequested);
+    await replyDeniedControl(interaction);
     return;
   }
 
   const state = musicService.getState(interaction.guild.id);
 
-  // Playback state mutations are grouped here so the button flow stays easy to scan.
-  switch (interaction.customId) {
-    case PLAYER_BUTTON_IDS.pauseResume:
-      if (state.isPaused) {
-        await musicService.resume(interaction.guild.id);
-      } else {
-        await musicService.pause(interaction.guild.id);
-      }
-      break;
-    case PLAYER_BUTTON_IDS.next:
-      await musicService.playNext(interaction.guild.id);
-      break;
-    case PLAYER_BUTTON_IDS.previous:
-      await musicService.playPrevious(interaction.guild.id);
-      break;
-    case PLAYER_BUTTON_IDS.stop:
-      await musicService.stop(interaction.guild.id);
-      break;
-    case PLAYER_BUTTON_IDS.shuffle:
-      musicService.shuffle(interaction.guild.id);
-      break;
-    case PLAYER_BUTTON_IDS.clear:
-      musicService.clearQueue(interaction.guild.id);
-      break;
-    case PLAYER_BUTTON_IDS.loop:
-      musicService.setLoopMode(interaction.guild.id, nextLoopMode(state.loopMode));
-      break;
-    case PLAYER_BUTTON_IDS.queue:
-      await interaction.editReply({ content: buildQueueText(state) });
-      return;
-    default:
-      return;
-  }
-
-  await syncPersistentPlayerMessage(
-    interaction,
-    settingsRepository,
-    musicService,
-    playerMessageService,
-    settings
+  const action = startPlayerButtonAction(
+    interaction.customId,
+    interaction.guild.id,
+    state,
+    musicService
   );
-}
-
-async function replyDeniedControl(
-  interaction: ButtonInteraction<'cached'>,
-  queueRequested: boolean
-): Promise<void> {
-  if (queueRequested) {
-    await interaction.editReply({ content: 'You are not allowed to control the player.' });
+  if (!action) {
     return;
   }
 
-  await interaction.followUp({
-    content: 'You are not allowed to control the player.',
-    flags: MessageFlags.Ephemeral
-  });
+  await syncPersistentPlayerMessage(interaction, musicService, playerMessageService);
+  await action;
+}
+
+function startPlayerButtonAction(
+  customId: string,
+  guildId: string,
+  state: ReturnType<MusicService['getState']>,
+  musicService: MusicService
+): Promise<void> | null {
+  switch (customId) {
+    case PLAYER_BUTTON_IDS.pauseResume:
+      return togglePauseResume(guildId, state.isPaused, musicService);
+    case PLAYER_BUTTON_IDS.next:
+      return toVoidPromise(musicService.playNext(guildId));
+    case PLAYER_BUTTON_IDS.previous:
+      return toVoidPromise(musicService.playPrevious(guildId));
+    case PLAYER_BUTTON_IDS.stop:
+      return musicService.stop(guildId);
+    case PLAYER_BUTTON_IDS.shuffle:
+      musicService.shuffle(guildId);
+      return Promise.resolve();
+    case PLAYER_BUTTON_IDS.clear:
+      musicService.clearQueue(guildId);
+      return Promise.resolve();
+    case PLAYER_BUTTON_IDS.loop:
+      musicService.setLoopMode(guildId, nextLoopMode(state.loopMode));
+      return Promise.resolve();
+    default:
+      return null;
+  }
+}
+
+async function togglePauseResume(
+  guildId: string,
+  isPaused: boolean,
+  musicService: MusicService
+): Promise<void> {
+  if (isPaused) {
+    await musicService.resume(guildId);
+    return;
+  }
+
+  await musicService.pause(guildId);
 }
 
 async function syncPersistentPlayerMessage(
   interaction: ButtonInteraction<'cached'>,
-  settingsRepository: GuildSettingsRepository,
   musicService: MusicService,
-  playerMessageService: PlayerMessageService,
-  settings: Awaited<ReturnType<GuildSettingsRepository['getOrCreate']>>
+  playerMessageService: PlayerMessageService
 ): Promise<void> {
-  if (!settings.playerChannelId || !settings.playerMessageId) {
-    return;
-  }
-
-  const channel = await interaction.guild.channels.fetch(settings.playerChannelId);
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
-  const newMessageId = await playerMessageService.updateOrRecreate(
-    channel,
-    settings.playerMessageId,
+  await playerMessageService.updateMessageImmediate(
+    interaction.message,
     musicService.getState(interaction.guild.id)
   );
+}
 
-  if (newMessageId !== settings.playerMessageId) {
-    await settingsRepository.upsert(interaction.guild.id, {
-      playerMessageId: newMessageId
-    });
-  }
+function toVoidPromise<T>(promise: Promise<T>): Promise<void> {
+  return promise.then(() => undefined);
+}
+
+async function replyDeniedControl(interaction: ButtonInteraction<'cached'>): Promise<void> {
+  await interaction.followUp({
+    content: 'You are not allowed to control the player.',
+    flags: MessageFlags.Ephemeral
+  });
 }
