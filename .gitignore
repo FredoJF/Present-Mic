@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+# Lavalink plugins
+lavalink/plugins/*.jar
 
 # Build outputs
 dist/
@@ -44,3 +46,5 @@ Thumbs.db
 .github/
 .codex/
 .agents/
+# Slash command registration fingerprint
+.present-mic/
