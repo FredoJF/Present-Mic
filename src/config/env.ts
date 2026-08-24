@@ -1,7 +1,12 @@
-import dotenv from 'dotenv';
 import { z } from 'zod';
 
-dotenv.config();
+// Node loads .env natively; no dotenv dependency needed. A missing file is fine,
+// since real deployments inject the environment directly.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env present.
+}
 
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1),
