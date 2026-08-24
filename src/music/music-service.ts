@@ -413,7 +413,9 @@ export class MusicService {
     const state = this.getState(guildId);
     const bounded = Math.max(0, Math.min(200, volume));
     state.volume = bounded;
-    void this.lavalink.setVolume(guildId, bounded);
+    this.lavalink.setVolume(guildId, bounded).catch((error: unknown) => {
+      logger.warn({ error, guildId, volume: bounded }, 'Failed to apply volume to Lavalink');
+    });
     this.emitStateChange(guildId);
     return bounded;
   }

@@ -14,6 +14,14 @@ type ImmediateRenderTask = {
   state: GuildPlayerState;
 };
 
+type PendingRefresh = {
+  channel: GuildTextBasedChannel;
+  messageId: string;
+  state: GuildPlayerState;
+  resolvers: ((messageId: string) => void)[];
+  rejecters: ((error: unknown) => void)[];
+};
+
 export class PlayerMessageService {
   private readonly builder = new PlayerMessageBuilder();
   private readonly playerButtonIds = new Set<string>(Object.values(PLAYER_BUTTON_IDS));
@@ -21,6 +29,8 @@ export class PlayerMessageService {
   private readonly recentImmediateUpdates = new Map<string, number>();
   private readonly pendingImmediateRenders = new Map<string, ImmediateRenderTask>();
   private readonly runningImmediateRenders = new Set<string>();
+  private readonly pendingRefreshes = new Map<string, PendingRefresh>();
+  private readonly runningRefreshes = new Set<string>();
 
   public async ensureMessage(
     channel: GuildTextBasedChannel,
@@ -99,19 +109,91 @@ export class PlayerMessageService {
     }
   }
 
-  public async updateOrRecreate(
+  /**
+   * Background refresh for the persistent player message.
+   *
+   * State changes arrive in bursts — queueing a playlist, or a track transition
+   * that flips isPlaying and then advances the queue, each emit a change. Only
+   * the final state is worth rendering, so a burst that lands while an edit is
+   * in flight collapses into one follow-up edit instead of one edit per event.
+   * Every caller in the burst resolves with the message id that was rendered,
+   * which may be a new one if the old message had been deleted.
+   */
+  public updateOrRecreate(
     channel: GuildTextBasedChannel,
     messageId: string,
     state: GuildPlayerState
   ): Promise<string> {
     const stateSnapshot = clonePlayerState(state);
+
+    return new Promise<string>((resolve, reject) => {
+      const queued = this.pendingRefreshes.get(channel.id);
+      if (queued) {
+        // Newer state supersedes the queued one; both callers share the result.
+        queued.channel = channel;
+        queued.messageId = messageId;
+        queued.state = stateSnapshot;
+        queued.resolvers.push(resolve);
+        queued.rejecters.push(reject);
+      } else {
+        this.pendingRefreshes.set(channel.id, {
+          channel,
+          messageId,
+          state: stateSnapshot,
+          resolvers: [resolve],
+          rejecters: [reject]
+        });
+      }
+
+      void this.drainRefreshQueue(channel.id);
+    });
+  }
+
+  private async drainRefreshQueue(channelId: string): Promise<void> {
+    if (this.runningRefreshes.has(channelId)) {
+      return;
+    }
+
+    this.runningRefreshes.add(channelId);
+    try {
+      for (;;) {
+        const task = this.pendingRefreshes.get(channelId);
+        if (!task) {
+          return;
+        }
+
+        this.pendingRefreshes.delete(channelId);
+
+        try {
+          const renderedId = await this.renderOrRecreate(task.channel, task.messageId, task.state);
+          for (const resolve of task.resolvers) {
+            resolve(renderedId);
+          }
+        } catch (error) {
+          for (const rejectTask of task.rejecters) {
+            rejectTask(error);
+          }
+        }
+      }
+    } finally {
+      this.runningRefreshes.delete(channelId);
+    }
+  }
+
+  private renderOrRecreate(
+    channel: GuildTextBasedChannel,
+    messageId: string,
+    state: GuildPlayerState
+  ): Promise<string> {
+    // Still funnelled through the per-channel chain so it cannot interleave with
+    // ensureMessage or the immediate button-response renders.
     return this.enqueueChannelUpdate(channel.id, async () => {
       try {
         const message = await channel.messages.fetch(messageId);
-        await this.renderMessage(message, stateSnapshot);
+        await this.renderMessage(message, state);
         return messageId;
       } catch {
-        const recreated = await this.ensureMessageInternal(channel, null, stateSnapshot);
+        const recreated = await this.ensureMessageInternal(channel, null, state);
         return recreated.id;
       }
     });
