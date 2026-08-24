@@ -4,6 +4,9 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
+    # The stock client list works with the pinned snapshot build below. It needs no
+    # pot / remoteCipher / oauth configuration; if playback breaks again, update the
+    # pinned commit before adding any of that.
     clients:
       - WEB
       - MWEB
@@ -11,6 +14,28 @@ plugins:
       - ANDROID_VR
       - IOS
       - TVHTML5_SIMPLY
+  lavasrc:
+    # Spotify is metadata-only. LavaSrc resolves each Spotify item to a
+    # playable provider below, preferring YouTube and falling back to Deezer.
+    providers:
+      - 'ytsearch:"%ISRC%"'
+      - 'ytsearch:%QUERY%'
+      - 'dzisrc:%ISRC%'
+      - 'dzsearch:%QUERY%'
+    sources:
+      spotify: true
+      deezer: true
+    spotify:
+      clientId: ${SPOTIFY_CLIENT_ID:}
+      clientSecret: ${SPOTIFY_CLIENT_SECRET:}
+      spDc: ${SPOTIFY_SP_DC:}
+      # Use the Spotify application credentials for normal tracks, albums, and
+      # playlists. Anonymous tokens need a separate token endpoint and are
+      # only required for Spotify-generated playlists.
+      preferAnonymousToken: false
+    deezer:
+      arl: ${DEEZER_ARL:}
+      masterDecryptionKey: ${DEEZER_MASTER_DECRYPTION_KEY:}
 
 server:
   port: 2333
@@ -27,7 +52,18 @@ lavalink:
       http: true
       local: false
   plugins:
-    - dependency: 'dev.lavalink.youtube:youtube-plugin:1.18.1'
+    # Pinned to a snapshot commit build, not a release. Release 1.18.2 could not
+    # parse YouTube's current player script and no client could produce a playable
+    # URL; this commit (2026-08-19) fixes it. Snapshot artifacts carry no release
+    # notes and can be pruned, so move back to a released coordinate once a tagged
+    # release newer than this commit ships.
+    - dependency: 'dev.lavalink.youtube:youtube-plugin:f45bbb7aebfcbc1c553769e04af6cd43afa8b7c3'
+      snapshot: true
+    # Provides the `normalization` filter that LavalinkService.applyDefaultAudioFilters
+    # looks for. Without this plugin that code silently skips itself.
+    - dependency: 'com.github.Devoxin:LavaDSPX-Plugin:0.0.5'
+      repository: 'https://jitpack.io'
+    - dependency: 'com.github.topi314.lavasrc:lavasrc-plugin:4.8.1'
       repository: 'https://maven.lavalink.dev/releases'
       snapshot: false
 
