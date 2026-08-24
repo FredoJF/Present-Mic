@@ -22,6 +22,11 @@ services:
       - _JAVA_OPTIONS=-Xmx512M
       - SERVER_PORT=2333
       - LAVALINK_SERVER_PASSWORD=${LAVALINK_PASSWORD:-ImaWYE0jbyKA6IJJ}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      - SPOTIFY_SP_DC=${SPOTIFY_SP_DC:-}
+      - DEEZER_MASTER_DECRYPTION_KEY=${DEEZER_MASTER_DECRYPTION_KEY:-}
+      - DEEZER_ARL=${DEEZER_ARL:-}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml
       - ./lavalink/plugins:/opt/Lavalink/plugins

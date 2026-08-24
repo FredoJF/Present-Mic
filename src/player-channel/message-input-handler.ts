@@ -2,6 +2,7 @@ import type { Message } from 'discord.js';
 
 import type { GuildSettingsRepository } from '../database/repositories/guild-settings.repository.js';
 import type { MusicService } from '../music/music-service.js';
+import { logger } from '../utils/logger.js';
 
 export class MessageInputHandler {
   public constructor(
@@ -40,6 +41,15 @@ export class MessageInputHandler {
       });
 
       // Player message updates are handled centrally via MusicService state listeners.
+    } catch (error) {
+      const details = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn(
+        { error, guildId: message.guild.id, query: message.content },
+        'Failed to resolve music input'
+      );
+      await message
+        .reply({ content: `I couldn't queue that input: ${details}` })
+        .catch(() => undefined);
     } finally {
       await message.delete().catch(() => undefined);
     }
