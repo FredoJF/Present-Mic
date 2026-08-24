@@ -9,7 +9,7 @@ export type Track = {
   thumbnailUrl?: string;
   requestedByUserId: string;
   requestedByDisplayName: string;
-  source: 'youtube' | 'search';
+  source: 'youtube' | 'spotify' | 'deezer' | 'search';
   playlistName?: string;
 };
 
@@ -41,15 +41,18 @@ export function createIdleState(guildId: string): GuildPlayerState {
   };
 }
 
-function cloneTrack(track: Track): Track {
-  return { ...track };
-}
-
+/**
+ * Snapshots a state so listeners can hold it across awaits without observing
+ * later mutations. Only the arrays are copied, not the tracks inside them:
+ * a Track is never mutated after creation, it is only moved between the queue,
+ * history, and currentTrack. Deep-copying every track made each snapshot O(queue)
+ * in object allocations, which is wasteful on a long playlist since a snapshot is
+ * taken on every state change (pause, volume, shuffle, each track transition).
+ */
 export function clonePlayerState(state: GuildPlayerState): GuildPlayerState {
   return {
     ...state,
-    currentTrack: state.currentTrack ? cloneTrack(state.currentTrack) : null,
-    history: state.history.map(cloneTrack),
-    queue: state.queue.map(cloneTrack)
+    history: [...state.history],
+    queue: [...state.queue]
   };
 }

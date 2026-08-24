@@ -187,19 +187,10 @@ export class LavalinkService {
       await this.onVoiceConnectionHandler?.(player.guildId, voiceChannelId, 'reconnected');
     });
 
+    // Lavalink emits playerUpdate on a timer (roughly every 5s) for every active
+    // player. Only the idle transition is actionable, so the common case must not
+    // build a log record or await anything.
     manager.on('playerUpdate', async (_oldPlayerJson, player) => {
-      logger.info(
-        {
-          guildId: player.guildId,
-          playing: player.playing,
-          paused: player.paused,
-          position: player.position,
-          hasCurrent: Boolean(player.queue.current),
-          queuedTracks: player.queue.tracks.length
-        },
-        'Lavalink player update'
-      );
-
       if (player.playing || player.paused || player.queue.current) {
         return;
       }
@@ -270,6 +261,10 @@ export class LavalinkService {
           'Resolved tracks via Lavalink attempt'
         );
 
+        if (response.loadType === 'error') {
+          throw new Error(response.exception?.message ?? 'Lavalink could not resolve this input');
+        }
+
         if (response.tracks.length > 0) {
           break;
         }
@@ -291,6 +286,10 @@ export class LavalinkService {
       throw lastError instanceof Error ? lastError : new Error('Lavalink track resolution failed');
     }
 
+    if (response.tracks.length === 0) {
+      throw new Error('No playable tracks were found for this input');
+    }
+
     const kind: ResolveResult['kind'] =
       response.loadType === 'playlist'
         ? 'playlist'
@@ -298,8 +297,7 @@ export class LavalinkService {
           ? 'video'
           : 'search';
     const playlistName = response.playlist?.name;
-    const resolvedTracks =
-      kind === 'search' ? response.tracks.slice(0, 1) : response.tracks;
+    const resolvedTracks = kind === 'search' ? response.tracks.slice(0, 1) : response.tracks;
 
     const tracks = resolvedTracks.map((track) => this.toPlayerTrack(track, input, playlistName));
 
@@ -377,6 +375,24 @@ export class LavalinkService {
     }
 
     return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  private getRequestedSource(query: string, resolvedSourceName: string): PlayerTrack['source'] {
+    const normalizedQuery = query.toLowerCase();
+
+    if (normalizedQuery.includes('open.spotify.com/') || normalizedQuery.startsWith('spsearch:')) {
+      return 'spotify';
+    }
+
+    if (
+      normalizedQuery.includes('deezer.com/') ||
+      normalizedQuery.includes('deezer.page.link/') ||
+      normalizedQuery.startsWith('dzsearch:')
+    ) {
+      return 'deezer';
+    }
+
+    return resolvedSourceName.includes('youtube') ? 'youtube' : 'search';
   }
 
   public async play(
@@ -627,7 +643,10 @@ export class LavalinkService {
       durationMs: track.info.duration,
       requestedByUserId: input.requestedByUserId,
       requestedByDisplayName: input.requestedByDisplayName,
-      source: track.info.sourceName.includes('youtube') ? 'youtube' : 'search'
+      // Spotify tracks are normally mirrored to Deezer or YouTube by LavaSrc.
+      // Keep the requested provider so the queue remains accurate to the URL
+      // the user supplied rather than the mirror chosen by Lavalink.
+      source: this.getRequestedSource(input.query, track.info.sourceName)
     };
 
     if (track.encoded) {
