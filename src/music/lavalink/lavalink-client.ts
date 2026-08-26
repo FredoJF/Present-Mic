@@ -42,6 +42,11 @@ type ResolveAttempt = {
 const RESOLVE_ERROR_RETRIES = 2;
 const RESOLVE_RETRY_DELAY_MS = 500;
 
+// Upper bound on a single Lavalink REST call. Must exceed the slowest realistic
+// load, which is a multi-page Spotify playlist combined with a cold anonymous
+// token fetch. Worst case a user waits this long per attempt before a retry.
+const RESOLVE_REQUEST_TIMEOUT_MS = 30_000;
+
 const NORMALIZATION_MAX_AMPLITUDE = 0.75;
 const NORMALIZATION_ADAPTIVE = true;
 
@@ -80,7 +85,15 @@ export class LavalinkService {
           authorization: env.LAVALINK_PASSWORD,
           secure: env.LAVALINK_SECURE,
           retryAmount: 10,
-          retryDelay: 5000
+          retryDelay: 5000,
+          // lavalink-client defaults this to 10s, which is shorter than a large
+          // Spotify playlist takes to load: LavaSrc pages the playlist and, on a
+          // 401 from the v1 API, fetches an anonymous token through
+          // spotify-tokener, whose headless Chrome start is not instant. When the
+          // signal fired first, Lavalink finished the load anyway and then failed
+          // to write the response ("Broken pipe"), so the work was done and
+          // thrown away on every attempt.
+          requestSignalTimeoutMS: RESOLVE_REQUEST_TIMEOUT_MS
         }
       ],
       sendToShard: (guildId, payload) => {
@@ -286,6 +299,15 @@ export class LavalinkService {
   }
 
   /**
+   * True when a request was cut off locally rather than answered by Lavalink.
+   * lavalink-client aborts via AbortSignal.timeout, which surfaces as a
+   * DOMException named TimeoutError.
+   */
+  private isAbortError(error: unknown): boolean {
+    return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+  }
+
+  /**
    * Runs one query variant, retrying only on server-side failures.
    *
    * A `loadType: 'error'` means the request reached Lavalink and something broke
@@ -296,6 +318,12 @@ export class LavalinkService {
    *
    * Empty results are never retried: those mean the query genuinely matched
    * nothing, and retrying would only add latency to every real miss.
+   *
+   * Timeouts are not retried either. When the signal fires, Lavalink usually
+   * carries on and completes the load, then fails to write to a closed socket —
+   * so a retry duplicates expensive upstream work that may already have
+   * succeeded, and multiplies how long the user waits for a failure. Better to
+   * fail fast and let them paste the link again.
    */
   private async runResolveAttempt(
     player: Player,
@@ -338,21 +366,27 @@ export class LavalinkService {
         error = thrown;
       }
 
+      const timedOut = this.isAbortError(error);
+      const willRetry = !timedOut && tryIndex < RESOLVE_ERROR_RETRIES;
+
       logger.warn(
         {
           guildId: input.guildId,
           attempt: attempt.label,
           attemptQuery: attempt.query,
           tryIndex,
-          willRetry: tryIndex < RESOLVE_ERROR_RETRIES,
+          timedOut,
+          willRetry,
           error
         },
         'Lavalink resolve attempt failed'
       );
 
-      if (tryIndex < RESOLVE_ERROR_RETRIES) {
-        await this.wait(RESOLVE_RETRY_DELAY_MS * (tryIndex + 1));
+      if (!willRetry) {
+        break;
       }
+
+      await this.wait(RESOLVE_RETRY_DELAY_MS * (tryIndex + 1));
     }
 
     return { response: null, error };
