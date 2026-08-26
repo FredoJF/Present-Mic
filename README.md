@@ -57,14 +57,18 @@ If you skip `prisma:migrate:deploy`, Prisma will throw `P2021` (`GuildSettings` 
 
 ## Player channel hygiene
 
-The player channel is meant to contain exactly one message: the player. Three mechanisms keep it that
+The player channel is meant to contain exactly one message: the player. Four mechanisms keep it that
 way, in order of how quickly they act.
 
 1. Input messages are deleted as soon as they are processed.
-2. Feedback about a failed request (for example `I couldn't queue that input: ...`) is posted as a
+2. Slow requests post a progress notice ("Loading playlist…", "Searching for …") after 1.5 seconds,
+   removed as soon as resolution finishes. Anything that resolves faster than that posts nothing, so a
+   plain YouTube link stays silent. The delay exists because a large Spotify playlist can take ten
+   seconds or more to load.
+3. Feedback about a failed request (for example `I couldn't queue that input: ...`) is posted as a
    self-deleting notice that removes itself after 12 seconds, rather than as a reply that would outlive
    the message it pointed at.
-3. A sweep every 5 minutes removes anything still left in the channel except the player message. This
+4. A sweep every 5 minutes removes anything still left in the channel except the player message. This
    is the backstop for notices whose delete timer was lost to a restart, messages posted while the bot
    was offline, and failed deletions.
 
