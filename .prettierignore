@@ -1,0 +1,7 @@
+# Generated / machine-managed files
+pnpm-lock.yaml
+package-lock.json
+prisma/migrations/
+dist/
+node_modules/
+lavalink/plugins/
