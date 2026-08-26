@@ -3,6 +3,7 @@ import type { Message } from 'discord.js';
 import type { GuildSettingsRepository } from '../database/repositories/guild-settings.repository.js';
 import type { MusicService } from '../music/music-service.js';
 import { logger } from '../utils/logger.js';
+import { sendTransientNotice } from './transient-notice.js';
 
 export class MessageInputHandler {
   public constructor(
@@ -47,9 +48,12 @@ export class MessageInputHandler {
         { error, guildId: message.guild.id, query: message.content },
         'Failed to resolve music input'
       );
-      await message
-        .reply({ content: `I couldn't queue that input: ${details}` })
-        .catch(() => undefined);
+      // Posted as a self-deleting notice rather than a reply: a reply would
+      // survive the deletion of the message it points at and linger in the
+      // channel until removed by hand.
+      if (message.channel.isSendable()) {
+        await sendTransientNotice(message.channel, `I couldn't queue that input: ${details}`);
+      }
     } finally {
       await message.delete().catch(() => undefined);
     }

@@ -37,6 +37,11 @@ type ResolveAttempt = {
   label: string;
 };
 
+// Extra tries per query variant when Lavalink reports a server-side failure.
+// Sized for one expired-credential refresh, not for a sustained outage.
+const RESOLVE_ERROR_RETRIES = 2;
+const RESOLVE_RETRY_DELAY_MS = 500;
+
 const NORMALIZATION_MAX_AMPLITUDE = 0.75;
 const NORMALIZATION_ADAPTIVE = true;
 
@@ -238,55 +243,28 @@ export class LavalinkService {
     let lastError: unknown;
 
     for (const attempt of attempts) {
-      try {
-        response = (await player.search(
-          {
-            query: attempt.query
-          },
-          {
-            id: input.requestedByUserId,
-            displayName: input.requestedByDisplayName
-          },
-          false
-        )) as SearchResult;
+      const outcome = await this.runResolveAttempt(player, input, attempt);
 
-        logger.info(
-          {
-            guildId: input.guildId,
-            attempt: attempt.label,
-            attemptQuery: attempt.query,
-            loadType: response.loadType,
-            tracks: response.tracks.length
-          },
-          'Resolved tracks via Lavalink attempt'
-        );
+      if (outcome.error) {
+        lastError = outcome.error;
+      }
 
-        if (response.loadType === 'error') {
-          throw new Error(response.exception?.message ?? 'Lavalink could not resolve this input');
-        }
-
+      if (outcome.response) {
+        response = outcome.response;
         if (response.tracks.length > 0) {
           break;
         }
-      } catch (error) {
-        lastError = error;
-        logger.warn(
-          {
-            guildId: input.guildId,
-            attempt: attempt.label,
-            attemptQuery: attempt.query,
-            error
-          },
-          'Lavalink resolve attempt failed'
-        );
       }
     }
 
-    if (!response) {
-      throw lastError instanceof Error ? lastError : new Error('Lavalink track resolution failed');
-    }
+    // An `error` load type never becomes `response`, so a server-side failure is
+    // reported with its own reason instead of being flattened into the generic
+    // "no playable tracks" message, which used to hide Spotify token failures.
+    if (!response || response.tracks.length === 0) {
+      if (lastError) {
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      }
 
-    if (response.tracks.length === 0) {
       throw new Error('No playable tracks were found for this input');
     }
 
@@ -305,6 +283,79 @@ export class LavalinkService {
       kind,
       tracks
     };
+  }
+
+  /**
+   * Runs one query variant, retrying only on server-side failures.
+   *
+   * A `loadType: 'error'` means the request reached Lavalink and something broke
+   * behind it — most often an expired upstream credential. LavaSrc caches its
+   * Spotify anonymous token and only refreshes after a rejected call, so the
+   * first paste of a link following an idle period fails while the retry
+   * succeeds. Retrying here absorbs that instead of surfacing it to the user.
+   *
+   * Empty results are never retried: those mean the query genuinely matched
+   * nothing, and retrying would only add latency to every real miss.
+   */
+  private async runResolveAttempt(
+    player: Player,
+    input: ResolveTracksInput,
+    attempt: ResolveAttempt
+  ): Promise<{ response: SearchResult | null; error: unknown }> {
+    let error: unknown;
+
+    for (let tryIndex = 0; tryIndex <= RESOLVE_ERROR_RETRIES; tryIndex += 1) {
+      try {
+        const result = (await player.search(
+          {
+            query: attempt.query
+          },
+          {
+            id: input.requestedByUserId,
+            displayName: input.requestedByDisplayName
+          },
+          false
+        )) as SearchResult;
+
+        logger.info(
+          {
+            guildId: input.guildId,
+            attempt: attempt.label,
+            attemptQuery: attempt.query,
+            loadType: result.loadType,
+            tracks: result.tracks.length,
+            tryIndex
+          },
+          'Resolved tracks via Lavalink attempt'
+        );
+
+        if (result.loadType !== 'error') {
+          return { response: result, error };
+        }
+
+        error = new Error(result.exception?.message ?? 'Lavalink could not resolve this input');
+      } catch (thrown) {
+        error = thrown;
+      }
+
+      logger.warn(
+        {
+          guildId: input.guildId,
+          attempt: attempt.label,
+          attemptQuery: attempt.query,
+          tryIndex,
+          willRetry: tryIndex < RESOLVE_ERROR_RETRIES,
+          error
+        },
+        'Lavalink resolve attempt failed'
+      );
+
+      if (tryIndex < RESOLVE_ERROR_RETRIES) {
+        await this.wait(RESOLVE_RETRY_DELAY_MS * (tryIndex + 1));
+      }
+    }
+
+    return { response: null, error };
   }
 
   private buildResolveAttempts(rawQuery: string): ResolveAttempt[] {

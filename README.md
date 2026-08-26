@@ -55,6 +55,23 @@ npm run start
 
 If you skip `prisma:migrate:deploy`, Prisma will throw `P2021` (`GuildSettings` table missing).
 
+## Player channel hygiene
+
+The player channel is meant to contain exactly one message: the player. Three mechanisms keep it that
+way, in order of how quickly they act.
+
+1. Input messages are deleted as soon as they are processed.
+2. Feedback about a failed request (for example `I couldn't queue that input: ...`) is posted as a
+   self-deleting notice that removes itself after 12 seconds, rather than as a reply that would outlive
+   the message it pointed at.
+3. A sweep every 5 minutes removes anything still left in the channel except the player message. This
+   is the backstop for notices whose delete timer was lost to a restart, messages posted while the bot
+   was offline, and failed deletions.
+
+The sweep needs the **Manage Messages** permission to remove other users' messages, and uses Discord's
+bulk delete endpoint. Discord will not bulk delete messages older than 14 days, so those are removed
+one at a time.
+
 ## Admin commands
 
 - `/music setup channel:#music`
@@ -88,7 +105,7 @@ resolve fine and every playlist fails. Two things are therefore required:
 - **An anonymous token source.** `docker-compose.yml` runs `spotify-tokener`, and LavaSrc is pointed at
   it via `customTokenEndpoint` with `preferPartnerApi: true`, which routes playlist loads through
   Spotify's partner API. If LavaSrc logs `Partner API failed for playlist {}, falling back to Spotify v1
-  API`, the token service is unreachable or returning nothing usable — check the `spotify-tokener`
+API`, the token service is unreachable or returning nothing usable — check the `spotify-tokener`
   container first. Deezer playback requires both `DEEZER_ARL` and `DEEZER_MASTER_DECRYPTION_KEY`.
 
 ## Keeping YouTube playback working

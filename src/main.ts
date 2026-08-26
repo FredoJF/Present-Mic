@@ -6,6 +6,7 @@ import { LavalinkService } from './music/lavalink/lavalink-client.js';
 import { MusicService } from './music/music-service.js';
 import { LavalinkSourceProvider } from './music/providers/lavalink-provider.js';
 import { MessageInputHandler } from './player-channel/message-input-handler.js';
+import { PlayerChannelCleaner } from './player-channel/player-channel-cleaner.js';
 import { PlayerMessageService } from './player-channel/player-message-service.js';
 import { logger } from './utils/logger.js';
 
@@ -67,6 +68,17 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  // Keep the player channel free of anything but the player message. Input
+  // messages and feedback notices clean themselves up; this catches the rest.
+  const playerChannelCleaner = new PlayerChannelCleaner(
+    client,
+    settingsRepository,
+    playerMessageService
+  );
+  client.once('clientReady', () => {
+    playerChannelCleaner.start();
+  });
+
   // Startup sequence.
   await lavalinkService.connect(client);
   await registerCommands();
@@ -75,6 +87,7 @@ async function bootstrap(): Promise<void> {
   // Graceful shutdown.
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down');
+    playerChannelCleaner.stop();
     await prisma.$disconnect();
     client.destroy();
     process.exit(0);

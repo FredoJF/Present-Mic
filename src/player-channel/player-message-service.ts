@@ -5,6 +5,7 @@ import {
   createPlayerControlsRows
 } from '../discord/components/player-buttons.js';
 import { clonePlayerState, createIdleState, type GuildPlayerState } from '../music/player-state.js';
+import { logger } from '../utils/logger.js';
 import { PlayerMessageBuilder } from './player-message-builder.js';
 
 const IMMEDIATE_UPDATE_TTL_MS = 1500;
@@ -199,34 +200,68 @@ export class PlayerMessageService {
     });
   }
 
+  /**
+   * Removes every message in the player channel except the player itself.
+   *
+   * The single-channel UX treats the player message as the only thing that
+   * belongs here, so this sweeps user messages and stray bot output alike.
+   * Deletion goes through bulkDelete, which handles up to 100 messages in one
+   * request instead of one request each — the previous per-message loop hit
+   * rate limits on a channel with any real backlog. Discord refuses to bulk
+   * delete anything older than 14 days, so those fall back to single deletes.
+   */
   public async cleanupChannel(
     channel: GuildTextBasedChannel,
     keepMessageId?: string | null
-  ): Promise<void> {
-    const botUserId = channel.client.user?.id;
-    if (!botUserId) {
-      return;
-    }
-
+  ): Promise<number> {
     let before: string | undefined;
+    let deleted = 0;
 
     for (;;) {
       const messages = before
         ? await channel.messages.fetch({ limit: 100, before })
         : await channel.messages.fetch({ limit: 100 });
       if (messages.size === 0) {
-        return;
+        return deleted;
       }
 
-      await Promise.all(
-        messages
-          .filter((message) => message.author.id === botUserId && message.id !== keepMessageId)
-          .map((message) => message.delete().catch(() => undefined))
+      const oldest = messages.last();
+      const removable = messages.filter(
+        (message) => message.id !== keepMessageId && message.deletable
       );
 
-      const oldest = messages.last();
+      if (removable.size > 0) {
+        // filterOld drops the >14d messages instead of rejecting the whole call.
+        const bulkDeleted = await channel.bulkDelete(removable, true).catch((error: unknown) => {
+          logger.warn(
+            { error, channelId: channel.id },
+            'Bulk delete failed in player channel, falling back to single deletes'
+          );
+          return null;
+        });
+
+        if (bulkDeleted) {
+          deleted += bulkDeleted.size;
+        }
+
+        // Anything bulkDelete would not take (too old, or the call failed).
+        const leftover = bulkDeleted
+          ? removable.filter((message) => !bulkDeleted.has(message.id))
+          : removable;
+
+        for (const message of leftover.values()) {
+          const removed = await message
+            .delete()
+            .then(() => true)
+            .catch(() => false);
+          if (removed) {
+            deleted += 1;
+          }
+        }
+      }
+
       if (!oldest || messages.size < 100) {
-        return;
+        return deleted;
       }
 
       before = oldest.id;
