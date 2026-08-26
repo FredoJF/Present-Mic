@@ -29,10 +29,20 @@ plugins:
       clientId: ${SPOTIFY_CLIENT_ID:}
       clientSecret: ${SPOTIFY_CLIENT_SECRET:}
       spDc: ${SPOTIFY_SP_DC:}
-      # Use the Spotify application credentials for normal tracks, albums, and
-      # playlists. Anonymous tokens need a separate token endpoint and are
-      # only required for Spotify-generated playlists.
-      preferAnonymousToken: false
+      # Playlist reads need an anonymous token, not the client-credentials token.
+      # Spotify answers GET /v1/playlists/{id}/items with 401 "Valid user
+      # authentication required" for app-only tokens, while /v1/tracks/{id} still
+      # works — which is why single tracks resolved fine and playlists did not.
+      #
+      # preferPartnerApi routes playlist and search loads through Spotify's
+      # partner (web player) API, which accepts anonymous tokens. LavaSrc still
+      # falls back to the v1 API on failure, logging "Partner API failed for
+      # playlist {}, falling back to Spotify v1 API".
+      preferPartnerApi: true
+      # Anonymous tokens cannot be minted from Spotify's default endpoint anymore
+      # (it is TOTP-protected), so LavaSrc needs a token service. The default
+      # points at the spotify-tokener container in docker-compose.yml.
+      customTokenEndpoint: ${SPOTIFY_CUSTOM_TOKEN_ENDPOINT:http://spotify-tokener:8080/api/token}
     deezer:
       arl: ${DEEZER_ARL:}
       masterDecryptionKey: ${DEEZER_MASTER_DECRYPTION_KEY:}
@@ -63,7 +73,12 @@ lavalink:
     # looks for. Without this plugin that code silently skips itself.
     - dependency: 'com.github.Devoxin:LavaDSPX-Plugin:0.0.5'
       repository: 'https://jitpack.io'
-    - dependency: 'com.github.topi314.lavasrc:lavasrc-plugin:4.8.1'
+    # 4.8.3 or newer is required for Spotify playlists. Spotify retired
+    # GET /v1/playlists/{id}/tracks for apps registered after the change, and
+    # 4.8.1 still calls it, so playlist loads fail with "Something went wrong
+    # while looking up the track" while individual /v1/tracks/{id} lookups
+    # keep working.
+    - dependency: 'com.github.topi314.lavasrc:lavasrc-plugin:4.8.3'
       repository: 'https://maven.lavalink.dev/releases'
       snapshot: false
 

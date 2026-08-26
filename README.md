@@ -76,7 +76,20 @@ If you skip `prisma:migrate:deploy`, Prisma will throw `P2021` (`GuildSettings` 
 
 - YouTube is the primary playback source, for both search text and for mirroring Spotify/Deezer URLs.
 - Spotify URLs are resolved by the LavaSrc Lavalink plugin and mirrored to YouTube first, then Deezer. Spotify audio is not streamed directly.
-- Add `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` to `.env` before starting Docker Compose. These are required for normal Spotify tracks, albums, and playlists. `SPOTIFY_SP_DC` is only used for lyrics. Spotify-generated playlists additionally require a LavaSrc `customTokenEndpoint`. Deezer playback requires both `DEEZER_ARL` and `DEEZER_MASTER_DECRYPTION_KEY`.
+- Add `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` to `.env` before starting Docker Compose. These are required for normal Spotify tracks, albums, and playlists. `SPOTIFY_SP_DC` is only used for lyrics.
+
+Spotify **playlists** need more than the client ID and secret. Spotify answers
+`GET /v1/playlists/{id}/items` with `401 Valid user authentication required` when the caller presents an
+app-only client-credentials token, while `/v1/tracks/{id}` still accepts it — so single Spotify tracks
+resolve fine and every playlist fails. Two things are therefore required:
+
+- **LavaSrc 4.8.3 or newer.** Spotify retired the playlist `/tracks` endpoint for apps registered after
+  the change; older LavaSrc still calls it.
+- **An anonymous token source.** `docker-compose.yml` runs `spotify-tokener`, and LavaSrc is pointed at
+  it via `customTokenEndpoint` with `preferPartnerApi: true`, which routes playlist loads through
+  Spotify's partner API. If LavaSrc logs `Partner API failed for playlist {}, falling back to Spotify v1
+  API`, the token service is unreachable or returning nothing usable — check the `spotify-tokener`
+  container first. Deezer playback requires both `DEEZER_ARL` and `DEEZER_MASTER_DECRYPTION_KEY`.
 
 ## Keeping YouTube playback working
 

@@ -27,8 +27,25 @@ services:
       - SPOTIFY_SP_DC=${SPOTIFY_SP_DC:-}
       - DEEZER_MASTER_DECRYPTION_KEY=${DEEZER_MASTER_DECRYPTION_KEY:-}
       - DEEZER_ARL=${DEEZER_ARL:-}
+      - SPOTIFY_CUSTOM_TOKEN_ENDPOINT=${SPOTIFY_CUSTOM_TOKEN_ENDPOINT:-http://spotify-tokener:8080/api/token}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml
       - ./lavalink/plugins:/opt/Lavalink/plugins
     ports:
       - '2333:2333'
+    depends_on:
+      - spotify-tokener
+
+  # Mints Spotify anonymous and account tokens for LavaSrc. Spotify's own token
+  # endpoint is TOTP-protected, and playlist reads reject client-credentials
+  # tokens with 401 "Valid user authentication required", so LavaSrc cannot load
+  # any playlist without this. First-party service from the LavaSrc author.
+  spotify-tokener:
+    image: ghcr.io/topi314/spotify-tokener:master
+    restart: unless-stopped
+    # The service drives headless Chrome; Docker's default 64MB /dev/shm makes it
+    # hang rather than fail cleanly.
+    shm_size: 1gb
+    environment:
+      - SPOTIFY_TOKENER_ADDR=0.0.0.0:8080
+      - SPOTIFY_TOKENER_LOG_LEVEL=INFO
